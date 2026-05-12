@@ -51,8 +51,8 @@ def test_segment_plot_inputs_removes_nans(x, y, array):
     total_sum = 0
     for x, y, data in _segment_plot_inputs(x, y, array):
         assert np.sum(np.isnan(data)) == 0
-        assert np.product(data.shape) > 0
-        total_size += np.product(data.shape)
+        assert np.prod(data.shape) > 0
+        total_size += np.prod(data.shape)
         total_sum += np.sum(data)
     assert total_size == np.sum(~np.isnan(array))
     assert total_sum == np.nansum(array)
