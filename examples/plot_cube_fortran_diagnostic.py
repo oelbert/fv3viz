@@ -11,7 +11,7 @@ import io
 import warnings
 import xarray as xr
 from fv3viz import plot_cube
-from vcm.cubedsphere import GridMetadataFV3
+from fv3viz.vcm.cubedsphere import GridMetadataFV3
 
 warnings.filterwarnings(
     "ignore",

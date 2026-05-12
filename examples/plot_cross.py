@@ -7,7 +7,7 @@ cartopy may not be installed and/or latitude and longitude coordinates
 are not easily available.
 """
 
-import vcm
+import fv3viz.vcm as vcm
 import fsspec
 
 url = "https://github.com/ai2cm/vcm-ml-example-data/blob/main/fv3net/fv3viz/plot_2_plot_cube_prognostic_diags.nc?raw=true"  # noqa

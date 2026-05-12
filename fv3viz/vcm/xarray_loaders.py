@@ -1,0 +1,176 @@
+import json
+import logging
+import io
+import tempfile
+import os
+import shutil
+from typing import BinaryIO
+
+import dask.array as da
+import numpy as np
+import xarray as xr
+from dask.delayed import delayed
+
+from .cloud.fsspec import get_fs
+
+
+logger = logging.getLogger("vcm.xarray_loaders")
+
+
+def _read_metadata_remote(fs, url):
+    logging.info("Reading metadata")
+    with fs.open(url, "rb") as f:
+        return xr.open_dataset(f).load()
+
+
+def open_remote_nc(fs, url):
+    logger.debug(f"Downloading {url}")
+    data = fs.cat(url)
+    f = io.BytesIO(data)
+    return xr.open_dataset(f).load()
+
+
+def open_tiles(url_prefix: str) -> xr.Dataset:
+    """Lazily open a set of FV3 netCDF tile files
+
+    Args:
+        url_prefix: the prefix of the set of files before ".tile?.nc". The metadata
+            and dimensions are harvested from the first tile only.
+    Returns:
+        dataset of merged tiles.
+
+    """
+    fs = get_fs(url_prefix)
+    files = sorted(fs.glob(url_prefix + ".tile?.nc"))
+    if len(files) != 6:
+        raise ValueError(
+            f"Invalid set of input files. {len(files)} detected, but 6 expected."
+        )
+    schema = _read_metadata_remote(fs, files[0])
+    delayeds = [delayed(open_remote_nc)(fs, url) for url in files]
+    datasets = [open_delayed(d, schema) for d in delayeds]
+    return xr.concat(datasets, dim="tile").assign_coords(tile=list(range(6)))
+
+
+def _delayed_to_array(delayed_dataset, key, shape, dtype):
+    null = da.full(shape, np.nan, dtype=dtype)
+    array_delayed = delayed_dataset.get(key, null)
+    return da.from_delayed(array_delayed, shape, dtype)
+
+
+def open_delayed(delayed_dataset, schema: xr.Dataset) -> xr.Dataset:
+    """Open dask delayed object with the same metadata as template
+
+    Mostly useful for lazily loading remote resources. For example, this greatly
+    accelerates opening a list of remote netCDF resources conforming to the same
+    "schema".
+
+    Args:
+        delayed_dataset: a dask delayed object which resolves to an xarray Dataset
+        schema: an xarray Dataset with the same coords and dims as the
+            Dataset wrapped with the delayed object.
+
+    Returns:
+        dataset: a dask-array backed dataset
+
+    Example:
+
+        >>> import xarray as xr
+        >>> from dask.delayed import delayed
+        >>> @delayed
+        ... def identity(x):
+        ...     return x
+        ...
+        >>> ds = xr.Dataset({'a': (['x'], np.ones(10))})
+        >>> delayed = identity(ds)
+        >>> delayed
+        Delayed('identity-6539bc06-097a-4864-8cbf-699ebe3c4130')
+        >>> wrapped_delayed_obj = open_delayed(delayed, schema=ds)
+        >>> wrapped_delayed_obj
+        <xarray.Dataset>
+        Dimensions:  (x: 10)
+        Dimensions without coordinates: x
+        Data variables:
+            a        (x) float64 dask.array<chunksize=(10,), meta=np.ndarray>
+
+
+    """
+    data_vars = {}
+    for key in schema:
+        template_var = schema[key]
+        array = _delayed_to_array(
+            delayed_dataset, key, shape=template_var.shape, dtype=template_var.dtype
+        )
+        data_vars[key] = (template_var.dims, array, template_var.attrs)
+    return xr.Dataset(data_vars, coords=schema.coords, attrs=schema.attrs)
+
+
+def dump_nc(ds: xr.Dataset, f: BinaryIO):
+    # to_netcdf closes file, which will delete the buffer
+    # need to use a buffer since seek doesn't work with GCSFS file objects
+    with tempfile.TemporaryDirectory() as dirname:
+        url = os.path.join(dirname, "tmp.nc")
+        ds.to_netcdf(url, engine="h5netcdf")
+        with open(url, "rb") as tmp1:
+            shutil.copyfileobj(tmp1, f)
+
+
+def to_json(ds, filename, mode="w", **kwargs):
+    """Write an xarray Dataset to JSON.
+
+    An important note about this function is that it does not support encoding
+    all datatypes supported by xarray.  It will raise an error if a variable
+    in the dataset is of a type that has not been tested.
+
+    Args:
+        ds: xr.Dataset
+        filename: str
+        mode: str (default w)
+        kwargs: dict
+            Keyword arguments passed through to json.dump
+    """
+    for name, var in ds.variables.items():
+        kind = var.dtype.kind
+        if kind not in "biufSU":
+            raise NotImplementedError(
+                f"It is not currently possible to serialize data of kind "
+                f"{kind!r}, the kind of variable {name}, to JSON in vcm."
+            )
+    with open(filename, mode) as file:
+        json.dump(ds.compute().to_dict(), file, **kwargs)
+
+
+def dataset_from_dict(dictionary):
+    """Construct an xarray Dataset from a dictionary.
+
+    This is meant to provide a roundtrip mechanism from the result of
+    xr.Dataset.to_dict().
+
+    Args:
+        dictionary: dict
+
+    Returns:
+        xr.Dataset
+    """
+    data_vars = {}
+    for v, data in dictionary["data_vars"].items():
+        data_vars[v] = (data["dims"], data["data"], data["attrs"])
+    coords = {}
+    for v, data in dictionary["coords"].items():
+        coords[v] = (data["dims"], data["data"], data["attrs"])
+    attrs = dictionary["attrs"]
+    return xr.Dataset(data_vars, coords=coords, attrs=attrs)
+
+
+def open_json(filename):
+    """Load an xarray Dataset from a JSON file writen with to_json.
+
+    Args:
+        filename: str
+
+    Returns:
+        xr.Dataset
+    """
+    with open(filename, "r") as file:
+        dictionary = json.load(file)
+    return dataset_from_dict(dictionary)
