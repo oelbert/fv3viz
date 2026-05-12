@@ -23,7 +23,7 @@ from fv3viz._timestep_histograms import (
     plot_daily_hist,
     plot_hourly_hist,
 )
-from vcm.cubedsphere import GridMetadataFV3, GridMetadataScream
+from fv3viz.vcm.cubedsphere import GridMetadataFV3, GridMetadataScream
 
 
 def test_version():

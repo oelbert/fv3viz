@@ -32,10 +32,10 @@ def to_url(fs: fsspec.AbstractFileSystem, path: str):
         path: a path without a leading "protocol", as returned by ``fs.ls`` for example.
 
     Examples:
-        >>> import vcm.cloud.fsspec
+        >>> import fv3viz.vcm.cloud.fsspec
         >>> import fsspec
         >>> fs = fsspec.filesystem('file')
-        >>> vcm.cloud.fsspec.to_url(fs, 'some-path')
+        >>> fv3viz.vcm.cloud.fsspec.to_url(fs, 'some-path')
         'file://some-path'
     """
     if isinstance(fs.protocol, str):

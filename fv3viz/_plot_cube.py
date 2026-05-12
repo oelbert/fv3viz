@@ -15,7 +15,7 @@ from ._plot_helpers import (
     _align_plot_var_dims,
 )
 from ._masking import _mask_antimeridian_quads
-from vcm.cubedsphere import GridMetadata, GridMetadataFV3, GridMetadataScream
+from fv3viz.vcm.cubedsphere import GridMetadata, GridMetadataFV3, GridMetadataScream
 import xarray as xr
 import numpy as np
 from matplotlib import pyplot as plt
